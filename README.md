@@ -2,7 +2,7 @@
 
 # Introduction
 
-This is my personal project for mobile monitoring environment in my bedroom. Such as Temperature, Humidity, Luminosity, Air Pressure, Air Quality, and Altitude using Flutter and WEMOS D1 Mini
+This is my personal project for mobile monitoring environment in my bedroom. Such as Temperature, Humidity, Luminosity, Air Pressure, Air Quality, and Altitude using Flutter and ESP32 Module
 
 ## Depedencies
 
