@@ -2,7 +2,9 @@
 
 # Introduction
 
-This is my personal project for mobile monitoring environment in my bedroom. Such as Temperature, Humidity, Luminosity, Air Pressure, Air Quality, and Altitude using Flutter and ESP32 Module
+This is my personal project for mobile monitoring environment in my bedroom. Such as Temperature, Humidity, Luminosity, Air Pressure, Air Quality, and Altitude using Flutter and ESP32 Module.
+
+![UI](https://raw.githubusercontent.com/khakans/kostan-weather-station/master/UI.png)
 
 ## Depedencies
 
