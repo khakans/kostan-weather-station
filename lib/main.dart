@@ -1,43 +1,46 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:mqtt_client/mqtt_client.dart' as mqtt;
 
-void main() {
+import 'package:flutter/material.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+Future<void> main() async {
+  await dotenv.load(fileName: ".env");
   runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  // This widget is the root of your application.
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Kostan Weather Station',
+      title: 'Weather Station',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: MyHomePage(),
+      home: const MyHomePage(title: 'Weather Station'),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  MyHomePage({Key key, this.title}) : super(key: key);
+  const MyHomePage({super.key, required this.title});
 
   final String title;
 
   @override
-  _MyHomePageState createState() => _MyHomePageState();
+  State<MyHomePage> createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  String broker = 'broker.hivemq.com';
-  int port = 1883;
-  String clientIdentifier = 'kws';
+  final String broker = dotenv.env['MQTT_BROKER'] ?? '';
+  final int port = int.parse(dotenv.env['MQTT_PORT'] ?? '1883');
+  final String clientIdentifier = dotenv.env['MQTT_CLIENT_IDENTIFIER'] ?? '';
 
-  mqtt.MqttClient client;
-  mqtt.MqttConnectionState connectionState;
+  late MqttServerClient client;
+  MqttConnectionState? connectionState;
 
   int _tempVal = 0;
   int _humiVal = 0;
@@ -46,12 +49,11 @@ class _MyHomePageState extends State<MyHomePage> {
   int _airpVal = 0;
   int _altiVal = 0;
 
-  StreamSubscription subscription;
+  StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? subscription;
 
   void _subscribeToTopic(String topic) {
-    if (connectionState == mqtt.MqttConnectionState.connected) {
-      print('[MQTT client] Subscribing to ${topic.trim()}');
-      client.subscribe(topic, mqtt.MqttQos.exactlyOnce);
+    if (connectionState == MqttConnectionState.connected) {
+      client.subscribe(topic, MqttQos.exactlyOnce);
     }
   }
 
@@ -60,28 +62,20 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blue,
-        leading: Image.asset(
-          "assets/icon/weather.png",
-          scale: 6,
-        ),
-        title: Center(
-          child: Text("Kostan Weather Station",
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-              )),
+        leading: Image.asset("assets/icon/weather.png", scale: 6),
+        title: const Center(
+          child: Text(
+            "Weather Station",
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          ),
         ),
         actions: <Widget>[
-          Container(
+          SizedBox(
             width: 43,
             child: FloatingActionButton(
               backgroundColor: Colors.white,
               onPressed: _connect,
-              child: Icon(
-                Icons.play_arrow,
-                color: Colors.blue,
-                size: 37.0,
-              ),
+              child: const Icon(Icons.play_arrow, color: Colors.blue, size: 37),
             ),
           ),
         ],
@@ -130,130 +124,133 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  void _connect() async {
-    client = mqtt.MqttClient(broker, '');
+  Future<void> _connect() async {
+    client = MqttServerClient(broker, clientIdentifier);
     client.port = port;
     client.logging(on: true);
     client.keepAlivePeriod = 30;
     client.onDisconnected = _onDisconnected;
 
-    final mqtt.MqttConnectMessage connMess = mqtt.MqttConnectMessage()
+    final connMess = MqttConnectMessage()
         .withClientIdentifier(clientIdentifier)
-        .startClean() // Non persistent session for testing
-        .keepAliveFor(30)
-        .withWillQos(mqtt.MqttQos.atMostOnce);
-    print('[MQTT client] MQTT client connecting....');
+        .startClean()
+        .withWillQos(MqttQos.atMostOnce);
     client.connectionMessage = connMess;
 
     try {
       await client.connect();
     } catch (e) {
-      print(e);
       _disconnect();
+      return;
     }
 
-    /// Check if we are connected
-    // ignore: deprecated_member_use
-    if (client.connectionState == mqtt.MqttConnectionState.connected) {
-      print('[MQTT client] connected');
+    if (client.connectionStatus!.state == MqttConnectionState.connected) {
+      // [MQTT client] connected
       setState(() {
-        // ignore: deprecated_member_use
-        connectionState = client.connectionState;
+        connectionState = client.connectionStatus!.state;
       });
     } else {
-      print('[MQTT client] ERROR: MQTT client connection failed - '
-          // ignore: deprecated_member_use
-          'disconnecting, state is ${client.connectionState}');
+      // [MQTT client] ERROR: connection failed
       _disconnect();
+      return;
     }
-    subscription = client.updates.listen(_onMessage);
 
+    subscription = client.updates!.listen(_onMessage);
     _subscribeToTopic("kws/sensorKws");
   }
 
   void _disconnect() {
-    print('[MQTT client] _disconnect()');
+    // [MQTT client] disconnect
     client.disconnect();
     _onDisconnected();
   }
 
   void _onDisconnected() {
-    print('[MQTT client] _onDisconnected');
+    // [MQTT client] on disconnected'
     setState(() {
-      // ignore: deprecated_member_use
-      connectionState = client.connectionState;
-      client = null;
-      subscription.cancel();
-      subscription = null;
+      connectionState = client.connectionStatus?.state;
     });
-    print('[MQTT client] MQTT client disconnected');
+    subscription?.cancel();
+    subscription = null;
+    // [MQTT client] MQTT client disconnected
   }
 
-  void _onMessage(List<mqtt.MqttReceivedMessage> event) {
-    final mqtt.MqttPublishMessage recMess =
-        event[0].payload as mqtt.MqttPublishMessage;
-    final String message =
-        mqtt.MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-    print("${event.length} | ${event[0].topic} : $message");
-    var receiveData = parsingRawData(message, ",");
-    setState(() {
-      _tempVal = int.parse(receiveData[0]);
-      _humiVal = int.parse(receiveData[1]);
-      _lumiVal = int.parse(receiveData[2]);
-      _airqVal = int.parse(receiveData[3]);
-      _airpVal = int.parse(receiveData[4]);
-      _altiVal = int.parse(receiveData[5]);
-    });
+  void _onMessage(List<MqttReceivedMessage<MqttMessage>> event) {
+    final recMess = event[0].payload as MqttPublishMessage;
+    final message = MqttPublishPayload.bytesToStringAsString(
+      recMess.payload.message,
+    );
+    var receiveData = message.split(",");
+    if (receiveData.length >= 6) {
+      setState(() {
+        _tempVal = int.tryParse(receiveData[0]) ?? 0;
+        _humiVal = int.tryParse(receiveData[1]) ?? 0;
+        _lumiVal = int.tryParse(receiveData[2]) ?? 0;
+        _airqVal = int.tryParse(receiveData[3]) ?? 0;
+        _airpVal = int.tryParse(receiveData[4]) ?? 0;
+        _altiVal = int.tryParse(receiveData[5]) ?? 0;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    subscription?.cancel();
+    client.disconnect();
+    super.dispose();
   }
 }
 
 class CardSensor extends StatelessWidget {
-  CardSensor({this.iconVar, this.textVar, this.valuVar, this.unitVar});
   final String iconVar;
   final String textVar;
   final String valuVar;
   final String unitVar;
 
+  const CardSensor({
+    super.key,
+    required this.iconVar,
+    required this.textVar,
+    required this.valuVar,
+    required this.unitVar,
+  });
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      child: Card(
-        color: Colors.blue,
-        margin: EdgeInsets.all(10),
-        child: Column(
-          children: <Widget>[
-            ListTile(
-              leading: Image.asset(
-                iconVar,
+    return Card(
+      color: Colors.blue,
+      margin: const EdgeInsets.all(10),
+      child: Column(
+        children: <Widget>[
+          ListTile(
+            leading: Image.asset(iconVar),
+            title: Text(
+              textVar,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
               ),
-              title: Text(textVar,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  )),
             ),
-            Text(valuVar,
-                style: TextStyle(
-                  fontSize: 80,
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                )),
-            Text(unitVar,
-                style: TextStyle(
-                  fontSize: 25,
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                )),
-          ],
-        ),
+          ),
+          Text(
+            valuVar,
+            style: const TextStyle(
+              fontSize: 80,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Text(
+            unitVar,
+            style: const TextStyle(
+              fontSize: 25,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }
-}
-
-List parsingRawData(data, delimiter) {
-  var resultData = new List(6);
-  resultData = data.toString().split(delimiter);
-  return resultData;
 }
